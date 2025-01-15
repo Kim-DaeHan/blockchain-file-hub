@@ -63,7 +63,6 @@ yarn start
 
 - React Native
 - TypeScript
-- Expo
 - Smart Contracts (Solidity)
 - IPFS for decentralized storage
 
