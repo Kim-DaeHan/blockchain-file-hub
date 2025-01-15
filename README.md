@@ -62,7 +62,7 @@ yarn start
 ## Tech Stack
 
 - React Native
-- TypeScript
+- JavaScript
 - Smart Contracts (Solidity)
 - IPFS for decentralized storage
 
