@@ -82,45 +82,28 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
     }
 
     const filePath = req.file.path;
-    console.log("filePath: ", filePath);
+    console.log("req.file: ", req.file);
     const fileHash = await generateFileHash(filePath);
 
-    try {
-      // IPFS에 파일 업로드
-      const ipfsHash = await uploadToIPFS(filePath);
+    // IPFS에 파일 업로드
+    const ipfsHash = await uploadToIPFS(filePath);
+    console.log("ipfsHash: ", ipfsHash);
 
-      // 스마트 컨트랙트에 파일 정보 저장
-      const tx = await contract.storeFile(ipfsHash, req.file.originalname);
-      await tx.wait();
+    // 스마트 컨트랙트에 파일 정보 저장
+    const tx = await contract.storeFile(ipfsHash, req.file.originalname);
+    await tx.wait();
 
-      // 임시 파일 삭제
-      fs.unlinkSync(filePath);
+    // 임시 파일 삭제
+    fs.unlinkSync(filePath);
 
-      res.json({
-        fileName: req.file.originalname,
-        fileHash: fileHash,
-        ipfsHash: ipfsHash,
-        transactionHash: tx.hash,
-        algorithm: "SHA-256",
-        ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
-      });
-    } catch (error) {
-      if (error.message.includes("File already exists")) {
-        // 이미 존재하는 파일이면 기존 정보 반환
-        const fileInfo = await contract.getFileInfo(ipfsHash);
-        res.json({
-          fileName: fileInfo.fileName,
-          fileHash: fileHash,
-          ipfsHash: ipfsHash,
-          owner: fileInfo.owner,
-          timestamp: new Date(Number(fileInfo.timestamp) * 1000).toISOString(),
-          ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
-          message: "이 파일은 이미 저장되어 있습니다.",
-        });
-      } else {
-        throw error;
-      }
-    }
+    res.json({
+      fileName: req.file.originalname,
+      fileHash: fileHash,
+      ipfsHash: ipfsHash,
+      transactionHash: tx.hash,
+      algorithm: "SHA-256",
+      ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
+    });
   } catch (error) {
     console.error("파일 처리 중 오류 발생:", error);
     res.status(500).json({ error: "파일 처리 중 오류가 발생했습니다." });
@@ -141,11 +124,12 @@ app.get("/download-file/:ipfsHash", async (req, res) => {
 
     // IPFS에서 파일 다운로드
     const fileData = await downloadFromIPFS(ipfsHash);
+    const encodedFilename = encodeURIComponent(fileInfo.fileName);
 
     // 파일 다운로드 응답 설정
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${fileInfo.fileName}"`
+      `attachment; filename*=UTF-8''${encodedFilename}`
     );
     res.setHeader("Content-Type", "application/octet-stream");
 

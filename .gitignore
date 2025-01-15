@@ -78,3 +78,7 @@ coverage/
 # production build
 build/
 dist/
+
+# uploads
+uploads/*
+!uploads/.gitkeep
