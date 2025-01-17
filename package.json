@@ -3,18 +3,32 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rm -rf uploads/*",
+    "deploy:contract": "npx hardhat run scripts/deploy.js --network sepolia",
+    "verify:contract": "npx hardhat verify --network sepolia",
+    "compile": "npx hardhat compile",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@openzeppelin/contracts": "^5.2.0",
     "@pinata/sdk": "^2.1.0",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
     "ethers": "^6.13.5",
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0",
+    "hardhat": "^2.19.5",
+    "nodemon": "^3.0.3"
   }
 }

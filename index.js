@@ -74,6 +74,52 @@ async function downloadFromIPFS(ipfsHash) {
   }
 }
 
+// 메타데이터 생성 함수
+async function createMetadata(fileName, fileSize, fileType, ipfsHash) {
+  return {
+    name: fileName,
+    description: `File stored in blockchain-file-hub`,
+    image: `ipfs://${ipfsHash}`,
+    attributes: [
+      {
+        trait_type: "File Type",
+        value: fileType,
+      },
+      {
+        trait_type: "File Size",
+        value: fileSize,
+      },
+      {
+        trait_type: "Upload Date",
+        value: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
+// 메타데이터를 IPFS에 업로드하는 함수
+async function uploadMetadataToIPFS(metadata) {
+  try {
+    const result = await pinata.pinJSONToIPFS(metadata);
+    return result.IpfsHash;
+  } catch (error) {
+    console.error("메타데이터 업로드 오류:", error);
+    throw new Error("메타데이터 IPFS 업로드 중 오류가 발생했습니다.");
+  }
+}
+
+// 메타데이터를 가져오는 함수
+async function fetchMetadata(tokenURI) {
+  try {
+    const url = tokenURI.replace("ipfs://", IPFS_GATEWAY);
+    const response = await axios.get(url);
+    return response.data;
+  } catch (error) {
+    console.error("메타데이터 가져오기 실패:", error);
+    throw new Error("메타데이터를 가져오는데 실패했습니다.");
+  }
+}
+
 // 파일 업로드 API 엔드포인트
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
@@ -82,27 +128,48 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
     }
 
     const filePath = req.file.path;
-    console.log("req.file: ", req.file);
-    const fileHash = await generateFileHash(filePath);
 
-    // IPFS에 파일 업로드
-    const ipfsHash = await uploadToIPFS(filePath);
-    console.log("ipfsHash: ", ipfsHash);
+    // 1. 실제 파일을 IPFS에 업로드
+    const fileIpfsHash = await uploadToIPFS(filePath);
+    console.log("File IPFS Hash:", fileIpfsHash);
 
-    // 스마트 컨트랙트에 파일 정보 저장
-    const tx = await contract.storeFile(ipfsHash, req.file.originalname);
-    await tx.wait();
+    // 2. 메타데이터 생성
+    const metadata = await createMetadata(
+      req.file.originalname,
+      req.file.size,
+      req.file.mimetype,
+      fileIpfsHash
+    );
+
+    // 3. 메타데이터를 IPFS에 업로드
+    const metadataIpfsHash = await uploadMetadataToIPFS(metadata);
+    console.log("Metadata IPFS Hash:", metadataIpfsHash);
+
+    // 4. NFT 발행 (메타데이터 URI를 사용)
+    const tokenURI = `ipfs://${metadataIpfsHash}`;
+    const tx = await contract.storeFile(tokenURI);
+    const receipt = await tx.wait();
+
+    // 토큰 ID 가져오기 (이벤트에서)
+    const event = receipt.logs.find(
+      (log) => contract.interface.parseLog(log)?.name === "FileStored"
+    );
+    const tokenId = event
+      ? contract.interface.parseLog(event).args.tokenId
+      : null;
 
     // 임시 파일 삭제
     fs.unlinkSync(filePath);
 
     res.json({
       fileName: req.file.originalname,
-      fileHash: fileHash,
-      ipfsHash: ipfsHash,
+      fileIpfsHash: fileIpfsHash,
+      metadataIpfsHash: metadataIpfsHash,
+      tokenId: tokenId.toString(),
       transactionHash: tx.hash,
-      algorithm: "SHA-256",
-      ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
+      tokenURI: tokenURI,
+      fileUrl: `${IPFS_GATEWAY}${fileIpfsHash}`,
+      metadataUrl: `${IPFS_GATEWAY}${metadataIpfsHash}`,
     });
   } catch (error) {
     console.error("파일 처리 중 오류 발생:", error);
@@ -142,23 +209,27 @@ app.get("/download-file/:ipfsHash", async (req, res) => {
 });
 
 // 파일 정보 조회 API 엔드포인트
-app.get("/files/:ipfsHash", async (req, res) => {
+app.get("/files/:tokenId", async (req, res) => {
   try {
-    const ipfsHash = req.params.ipfsHash;
+    const tokenId = req.params.tokenId;
 
     // 스마트 컨트랙트에서 파일 정보 조회
-    const fileInfo = await contract.getFileInfo(ipfsHash);
+    const [uri, owner] = await contract.getFile(tokenId);
 
-    if (!fileInfo.fileName) {
-      return res.status(404).json({ error: "파일을 찾을 수 없습니다." });
-    }
+    // 메타데이터 가져오기
+    const metadata = await fetchMetadata(uri);
+
+    // 실제 파일의 IPFS 해시 추출
+    const fileIpfsHash = metadata.image.replace("ipfs://", "");
 
     res.json({
-      ipfsHash: ipfsHash,
-      fileName: fileInfo.fileName,
-      owner: fileInfo.owner,
-      timestamp: new Date(Number(fileInfo.timestamp) * 1000).toISOString(),
-      ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
+      tokenId: tokenId,
+      name: metadata.name,
+      description: metadata.description,
+      fileUrl: `${IPFS_GATEWAY}${fileIpfsHash}`,
+      metadataUrl: uri.replace("ipfs://", IPFS_GATEWAY),
+      owner: owner,
+      attributes: metadata.attributes,
     });
   } catch (error) {
     console.error("파일 정보 조회 중 오류 발생:", error);
