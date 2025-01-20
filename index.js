@@ -178,27 +178,35 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 });
 
 // 파일 다운로드 API 엔드포인트
-app.get("/download-file/:ipfsHash", async (req, res) => {
+app.get("/download-file/:tokenId", async (req, res) => {
   try {
-    const ipfsHash = req.params.ipfsHash;
+    const tokenId = req.params.tokenId;
 
-    // 스마트 컨트랙트에서 파일 정보 조회
-    const fileInfo = await contract.getFileInfo(ipfsHash);
+    // 토큰 ID로 파일 정보 조회
+    const [uri, owner] = await contract.getFile(tokenId);
 
-    if (!fileInfo.fileName) {
-      return res.status(404).json({ error: "파일을 찾을 수 없습니다." });
-    }
+    // 메타데이터 가져오기
+    const metadata = await fetchMetadata(uri);
+
+    // 실제 파일의 IPFS 해시 추출 (metadata.image에서 ipfs:// 제거)
+    const fileIpfsHash = metadata.image.replace("ipfs://", "");
 
     // IPFS에서 파일 다운로드
-    const fileData = await downloadFromIPFS(ipfsHash);
-    const encodedFilename = encodeURIComponent(fileInfo.fileName);
+    const fileData = await downloadFromIPFS(fileIpfsHash);
 
-    // 파일 다운로드 응답 설정
+    // Content-Type 설정
+    res.setHeader(
+      "Content-Type",
+      metadata.attributes.find((attr) => attr.trait_type === "File Type")
+        ?.value || "application/octet-stream"
+    );
+
+    // Content-Disposition 설정 (파일 다운로드)
+    const encodedFilename = encodeURIComponent(metadata.name);
     res.setHeader(
       "Content-Disposition",
       `attachment; filename*=UTF-8''${encodedFilename}`
     );
-    res.setHeader("Content-Type", "application/octet-stream");
 
     // 파일 데이터 전송
     res.send(fileData);
@@ -240,20 +248,48 @@ app.get("/files/:tokenId", async (req, res) => {
 // 사용자의 파일 목록 조회 API 엔드포인트
 app.get("/my-files", async (req, res) => {
   try {
-    const ipfsHashes = await contract.getUserFiles();
+    // 지갑 주소를 쿼리 파라미터로 받음
+    const walletAddress = req.query.address;
+    if (!walletAddress) {
+      return res.status(400).json({ error: "지갑 주소가 필요합니다." });
+    }
+
+    // 사용자의 토큰 ID 목록 조회
+    const tokenIds = await contract.tokensOfOwner(walletAddress);
+
+    // 각 토큰 ID에 대한 파일 정보 조회
     const files = await Promise.all(
-      ipfsHashes.map(async (ipfsHash) => {
-        const fileInfo = await contract.getFileInfo(ipfsHash);
-        return {
-          ipfsHash: ipfsHash,
-          fileName: fileInfo.fileName,
-          timestamp: new Date(Number(fileInfo.timestamp) * 1000).toISOString(),
-          ipfsUrl: `${IPFS_GATEWAY}${ipfsHash}`,
-        };
+      tokenIds.map(async (tokenId) => {
+        try {
+          // getFile 함수로 URI와 소유자 정보 가져오기
+          const [uri, owner] = await contract.getFile(tokenId);
+
+          // 메타데이터 가져오기
+          const metadata = await fetchMetadata(uri);
+
+          // 실제 파일의 IPFS 해시 추출
+          const fileIpfsHash = metadata.image.replace("ipfs://", "");
+
+          return {
+            tokenId: tokenId.toString(),
+            name: metadata.name,
+            description: metadata.description,
+            fileUrl: `${IPFS_GATEWAY}${fileIpfsHash}`,
+            metadataUrl: uri.replace("ipfs://", IPFS_GATEWAY),
+            owner: owner,
+            attributes: metadata.attributes,
+          };
+        } catch (error) {
+          console.error(`토큰 ID ${tokenId} 처리 중 오류:`, error);
+          return null;
+        }
       })
     );
 
-    res.json(files);
+    // 오류가 발생한 항목 제외
+    const validFiles = files.filter((file) => file !== null);
+
+    res.json(validFiles);
   } catch (error) {
     console.error("파일 목록 조회 중 오류 발생:", error);
     res.status(500).json({ error: "파일 목록 조회 중 오류가 발생했습니다." });
